@@ -1,3 +1,4 @@
+import os
 from pycompod import VertexGroup, PolyhedralComplex
 
 # model = "sphere"
@@ -7,7 +8,9 @@ model = "bunny"
 file = "./data/{}/convexes_refined/file.npz".format(model)
 
 vg = VertexGroup(file,verbosity=20,debug_export=True)
-cc = PolyhedralComplex(vg,device='gpu',verbosity=20)
+# Native Windows has no CUDA/torch stack in the demo environment; default to
+# the pure-numpy CPU path. Set COMPOD_DEVICE=gpu on a CUDA-enabled host.
+cc = PolyhedralComplex(vg, device=os.environ.get("COMPOD_DEVICE", "cpu"), verbosity=20)
 
 cc.construct_partition()
 cc.add_bounding_box_planes()

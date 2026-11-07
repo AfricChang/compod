@@ -147,3 +147,8 @@ dmypy.json
 tests/test_data/
 tests/test_output/
 
+/data/oblique
+
+# local agent workspace and reference bundle (not part of the deliverable)
+/.workbuddy/
+/psdr-compod-pipeline.zip
