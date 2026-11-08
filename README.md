@@ -104,6 +104,28 @@ cc.save_in_cells(out_file="data/{}/volumes/volume_mesh_simplified.ply".format(mo
 
 
 
+# :window: Windows Native Pipeline (no WSL / SageMath)
+
+A Windows-native end-to-end pipeline is provided under [`windows_compat/`](windows_compat/README.md):
+**OFF input → point-cloud sampling → C++ PSDR plane detection/refinement → COMPOD
+plane arrangement & convex decomposition → reconstructed polygon-mesh PLY →
+n-gon-preserving result OFF**, with multi-threaded + multi-process batching,
+resumable runs, and offline HTML comparison previews.
+
+```bash
+# single model
+bash windows_compat/psdr_cpp/run_pipeline.sh data/oblique/anhui/smid_004.off
+
+# full batch (8 model pipelines in parallel, 2 verification processes)
+python -u windows_compat/run_parallel.py \
+    --off-root data/oblique/vector_p_geometry_20261107 \
+    --result-root data/oblique/result/vector_p_geometry_20261107 \
+    --workers 8 --verify-procs 2
+```
+
+See [`windows_compat/README.md`](windows_compat/README.md) for the pipeline
+diagram, per-stage I/O, batch orchestration and result statistics.
+
 # :book: Citation
 
 If you use this work please consider citing:

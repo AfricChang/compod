@@ -3,6 +3,8 @@ collection into ASCII OFF, grouped by dataset (anhui / moganshan).
 
 Usage:
     python windows_compat/obj2off.py [--src SRC] [--dst DST] [--force]
+    python windows_compat/obj2off.py --src <folder-of-dataset-dirs> \
+        --dst data/oblique/vector_p_geometry_20261107 --layout flat --jobs 8
 
 The converter is deliberately dependency-free (standard library only):
   * keeps the original vertex coordinate strings, so no precision is lost;
@@ -28,19 +30,46 @@ DEFAULT_SRC = (
 DEFAULT_DST = r"E:\github\compod\data\oblique"
 
 
-def find_objs(src: str):
-    """Yield (dataset, source_obj_path) for every OBJ inside a margin_4m tree."""
+def _dataset_of(name: str) -> str:
+    low = name.lower()
+    if low.startswith("anhui"):
+        return "anhui"
+    if low.startswith("moganshan"):
+        return "moganshan"
+    return name
+
+
+def find_objs(src: str, layout: str = "margin"):
+    """Yield (dataset, source_obj_path) for every OBJ found under ``src``.
+
+    layout="margin" (legacy multiview collection): only OBJ files inside a
+      ``margin_4m`` folder; dataset comes from the first path component.
+    layout="flat" (vector-clipped export): every direct child directory of
+      ``src`` is a dataset holding the OBJ files.  If ``src`` itself holds
+      OBJ files, its own name is used as the dataset.
+    """
+    if layout == "flat":
+        subs = [d for d in sorted(os.listdir(src))
+                if os.path.isdir(os.path.join(src, d))]
+        if not subs:
+            subs = ["."]
+        for name in subs:
+            sub = os.path.join(src, name)
+            dataset = (_dataset_of(name) if name != "."
+                       else _dataset_of(os.path.basename(os.path.normpath(src))))
+            for dirpath, _dirs, filenames in os.walk(sub):
+                for fn in filenames:
+                    if fn.lower().endswith(".obj"):
+                        yield dataset, os.path.join(dirpath, fn)
+        return
+
     for dirpath, dirnames, filenames in os.walk(src):
         parts = dirpath.replace("/", os.sep).split(os.sep)
         if "margin_4m" not in parts:
             continue
         rel_first = os.path.relpath(dirpath, src).replace("/", os.sep).split(os.sep)[0]
-        low = rel_first.lower()
-        if low.startswith("anhui"):
-            dataset = "anhui"
-        elif low.startswith("moganshan"):
-            dataset = "moganshan"
-        else:
+        dataset = _dataset_of(rel_first)
+        if dataset not in ("anhui", "moganshan"):
             continue
         for fn in filenames:
             if fn.lower().endswith(".obj"):
@@ -191,10 +220,27 @@ def unique_name(dataset: str, obj_path: str, used: set[str]) -> str:
     return name
 
 
+def convert_one(task):
+    """Worker for --jobs > 1: convert one OBJ and return (manifest_row, error)."""
+    dataset, name, obj_path, out_path, force = task
+    if os.path.exists(out_path) and not force:
+        return (dataset, name, obj_path, "", "", "skipped"), None
+    try:
+        nv, nf, skipped_faces = convert_obj_to_off(obj_path, out_path)
+        return (dataset, name, obj_path, nv, nf,
+                f"skipped_faces={skipped_faces}"), None
+    except Exception as exc:
+        return (dataset, name, obj_path, "", "", f"ERROR: {exc}"), str(exc)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=DEFAULT_SRC)
     ap.add_argument("--dst", default=DEFAULT_DST)
+    ap.add_argument("--layout", choices=("margin", "flat"), default="margin",
+                    help="margin = legacy margin_4m tree; flat = one folder per dataset")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="parallel converter processes (1 = serial, legacy behaviour)")
     ap.add_argument("--force", action="store_true", help="overwrite existing OFF files")
     args = ap.parse_args()
 
@@ -204,45 +250,57 @@ def main() -> int:
         return 2
     os.makedirs(dst, exist_ok=True)
 
-    jobs = sorted(find_objs(src), key=lambda t: (t[0], t[1].lower()))
+    jobs = sorted(find_objs(src, args.layout), key=lambda t: (t[0], t[1].lower()))
     by_ds: dict[str, list[str]] = defaultdict(list)
     for ds, p in jobs:
         by_ds[ds].append(p)
     print(f"source : {src}")
     print(f"target : {dst}")
+    print(f"layout : {args.layout}   jobs: {args.jobs}")
     print(f"found  : {len(jobs)} OBJ  ({', '.join(f'{k}={len(v)}' for k, v in sorted(by_ds.items()))})")
 
     used: dict[str, set[str]] = defaultdict(set)
-    rows = []
-    stats = Counter()
-    t0 = time.time()
-    for i, (dataset, obj_path) in enumerate(jobs, 1):
+    tasks = []
+    for dataset, obj_path in jobs:
         out_dir = os.path.join(dst, dataset)
         os.makedirs(out_dir, exist_ok=True)
         name = unique_name(dataset, obj_path, used[dataset])
-        out_path = os.path.join(out_dir, name)
+        tasks.append((dataset, name, obj_path,
+                      os.path.join(out_dir, name), args.force))
 
-        if os.path.exists(out_path) and not args.force:
+    rows = []
+    stats = Counter()
+    t0 = time.time()
+
+    def record(result, i):
+        row, err = result
+        rows.append(row)
+        note = row[-1]
+        if note == "skipped":
             stats["skipped"] += 1
-            rows.append((dataset, name, obj_path, "", "", "skipped"))
-            continue
-
-        try:
-            nv, nf, skipped_faces = convert_obj_to_off(obj_path, out_path)
-        except Exception as exc:  # keep going, report at the end
+        elif note.startswith("ERROR"):
             stats["failed"] += 1
-            rows.append((dataset, name, obj_path, "", "", f"ERROR: {exc}"))
-            print(f"[{i}/{len(jobs)}] FAIL {os.path.basename(obj_path)}: {exc}", flush=True)
-            continue
-
-        stats["converted"] += 1
-        stats["vertices"] += nv
-        stats["faces"] += nf
-        rows.append((dataset, name, obj_path, nv, nf, f"skipped_faces={skipped_faces}"))
-        if i % 20 == 0 or i == len(jobs):
-            print(f"[{i}/{len(jobs)}] {time.time()-t0:.1f}s  "
+            print(f"[{i}/{len(tasks)}] FAIL {os.path.basename(row[2])}: {err}",
+                  flush=True)
+        else:
+            stats["converted"] += 1
+            stats["vertices"] += int(row[3])
+            stats["faces"] += int(row[4])
+        if i % 20 == 0 or i == len(tasks):
+            print(f"[{i}/{len(tasks)}] {time.time()-t0:.1f}s  "
                   f"verts={stats['vertices']:,} faces={stats['faces']:,}", flush=True)
 
+    if args.jobs > 1 and len(tasks) > 1:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        with ProcessPoolExecutor(max_workers=args.jobs) as pool:
+            futures = [pool.submit(convert_one, t) for t in tasks]
+            for i, fut in enumerate(as_completed(futures), 1):
+                record(fut.result(), i)
+    else:
+        for i, t in enumerate(tasks, 1):
+            record(convert_one(t), i)
+
+    rows.sort(key=lambda r: (r[0], r[1]))
     manifest = os.path.join(dst, "manifest.csv")
     with open(manifest, "w", encoding="utf-8-sig", newline="") as fh:
         w = csv.writer(fh)
