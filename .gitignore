@@ -152,3 +152,5 @@ tests/test_output/
 # local agent workspace and reference bundle (not part of the deliverable)
 /.workbuddy/
 /psdr-compod-pipeline.zip
+/data/result
+*.ply
