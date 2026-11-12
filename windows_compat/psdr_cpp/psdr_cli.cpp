@@ -23,7 +23,7 @@
 // boost::program_options is not installed in this vcpkg tree; the option set
 // is tiny, so parse argv directly.
 int main(int argc, char** argv) {
-    std::string input, out, detected;
+    std::string input, out, detected, ply_out;
     double eps_ratio = 0.01, normal_th = 0.9;
     int min_inliers = 120, knn = 10, max_iter = -1, max_seconds = -1;
     bool no_refine = false;
@@ -37,13 +37,14 @@ int main(int argc, char** argv) {
             };
             if (a == "--help") {
                 std::cout << "usage: psdr_cli <cloud.ply> --out <refined.npz> "
-                             "[--detected f.npz] [--epsilon-ratio 0.01] "
+                             "[--detected f.npz] [--ply f.ply] [--epsilon-ratio 0.01] "
                              "[--min-inliers 120] [--knn 10] [--normal-th 0.9] "
                              "[--max-iter -1] [--max-seconds -1] [--no-refine]\n";
                 return 0;
             } else if (a == "--no-refine") no_refine = true;
             else if (a == "--out") out = next();
             else if (a == "--detected") detected = next();
+            else if (a == "--ply") ply_out = next();
             else if (a == "--epsilon-ratio") eps_ratio = std::stod(next());
             else if (a == "--min-inliers") min_inliers = std::stoi(next());
             else if (a == "--knn") knn = std::stoi(next());
@@ -107,6 +108,14 @@ int main(int argc, char** argv) {
     if (rc != 0) {
         std::cerr << "save(" << out << ") failed" << std::endl;
         return 1;
+    }
+    if (!ply_out.empty()) {
+        try {
+            SC.to_ply(ply_out, "convex");
+            std::cout << "PSDR_CLI ply_out=" << ply_out << std::endl;
+        } catch (const std::exception& ex) {
+            std::cerr << "to_ply failed: " << ex.what() << std::endl;
+        }
     }
     std::cout << "PSDR_CLI refined_primitives=" << SC.get_number_of_primitives()
               << " inliers=" << SC.get_total_number_of_inliers()

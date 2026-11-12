@@ -206,3 +206,4 @@ python windows_compat/preview_oblique.py <源 OFF> <重建 PLY> ... --html out.h
   smid_024/031/033，最大 13.3 m）。
 - `pycompod` docstring 的平面方程写法（`n·x = d`）与实际实现（`n·x + d = 0`）不一致，
   以实现为准。
+
